@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Radiko PWA Player - Prototype</title>
+    <title>Radiko PWA Player - Step 2</title>
+    <!-- M4AやMP3のタグを解析するライブラリを読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
     <style>
-        /* 簡単なダークモード風のスタイリング（CustomTkinterの雰囲気に合わせて） */
         body {
             font-family: 'Helvetica Neue', Arial, sans-serif;
             background-color: #1a1a1a;
@@ -21,7 +22,7 @@
             padding: 30px;
             border-radius: 12px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            width: 400px;
+            width: 450px;
             text-align: center;
         }
         .file-input-label {
@@ -40,15 +41,64 @@
         input[type="file"] {
             display: none;
         }
-        .file-info {
-            margin: 15px 0;
-            font-size: 14px;
-            color: #aaaaaa;
-            word-break: break-all;
+        
+        /* メタデータ表示エリア */
+        .meta-container {
+            display: flex;
+            align-items: center;
+            background-color: #202020;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: left;
         }
+        .cover-art {
+            width: 100px;
+            height: 100px;
+            background-color: #3a3a3a;
+            border-radius: 4px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 12px;
+            color: #888;
+            margin-right: 15px;
+            background-size: cover;
+            background-position: center;
+            flex-shrink: 0;
+        }
+        .track-info {
+            flex-grow: 1;
+            overflow: hidden;
+        }
+        .track-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 5px;
+            white-space: nowrap;
+             Sherwood;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .track-album, .track-artist {
+            font-size: 13px;
+            color: #aaa;
+            margin-bottom: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        /* レジューム通知 */
+        .resume-status {
+            font-size: 12px;
+            color: #2ecc71;
+            margin-bottom: 10px;
+            height: 18px;
+        }
+        
         audio {
             width: 100%;
-            margin-top: 10px;
         }
     </style>
 </head>
@@ -57,40 +107,115 @@
 <div class="player-card">
     <h2>Radiko PWA 試作版</h2>
     
-    <!-- ファイル選択ボタン -->
     <label class="file-input-label">
         ▼ 音声ファイルを選択
         <input type="file" id="audio-file" accept="audio/*">
     </label>
     
-    <!-- 選択されたファイル名表示 -->
-    <div class="file-info" id="file-name">ファイルが選択されていません</div>
+    <!-- メタデータ・カバーアート表示領域 -->
+    <div class="meta-container">
+        <div class="cover-art" id="cover-art">[No Cover]</div>
+        <div class="track-info">
+            <div class="track-title" id="track-title">-</div>
+            <div class="track-album" id="track-album">-</div>
+            <div class="track-artist" id="track-artist">-</div>
+        </div>
+    </div>
     
-    <!-- オーディオプレイヤー要素 -->
+    <!-- レジューム状態の通知メッセージ -->
+    <div class="resume-status" id="resume-status"></div>
+    
     <audio id="audio-player" controls></audio>
 </div>
 
 <script>
     const fileInput = document.getElementById('audio-file');
-    const fileNameDisplay = document.getElementById('file-name');
     const audioPlayer = document.getElementById('audio-player');
+    
+    // UI要素
+    const trackTitle = document.getElementById('track-title');
+    const trackAlbum = document.getElementById('track-album');
+    const trackArtist = document.getElementById('track-artist');
+    const coverArt = document.getElementById('cover-art');
+    const resumeStatus = document.getElementById('resume-status');
 
-    // ファイルが選択されたときの処理
+    let currentFileName = "";
+
+    // ファイル選択時の処理
     fileInput.addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
 
-        // ファイル名を表示
-        fileNameDisplay.textContent = `再生中: ${file.name}`;
+        currentFileName = file.name;
+        resumeStatus.textContent = ""; // メッセージ初期化
 
-        // ファイルをブラウザで再生可能なURL（Blob URL）に変換してプレイヤーにセット
+        // 1. タグ情報の読み込み (jsmediatagsを使用)
+        jsmediatags.read(file, {
+            onSuccess: function(tag) {
+                const tags = tag.tags;
+                trackTitle.textContent = tags.title || file.name;
+                trackAlbum.textContent = tags.album || "-";
+                trackArtist.textContent = tags.artist || "-";
+
+                // カバーアートの処理
+                if (tags.picture) {
+                    const { data, format } = tags.picture;
+                    let base64String = "";
+                    for (let i = 0; i < data.length; i++) {
+                        base64String += String.fromCharCode(data[i]);
+                    }
+                    coverArt.style.backgroundImage = `url(data:${format};base64,${btoa(base64String)})`;
+                    coverArt.textContent = "";
+                } else {
+                    coverArt.style.backgroundImage = "none";
+                    coverArt.textContent = "[No Cover]";
+                }
+            },
+            onError: function(error) {
+                console.log('タグの読み込みに失敗しました:', error.type, error.info);
+                // 失敗した場合はファイル名などを最低限表示
+                trackTitle.textContent = file.name;
+                trackAlbum.textContent = "-";
+                trackArtist.textContent = "-";
+                coverArt.style.backgroundImage = "none";
+                coverArt.textContent = "[No Cover]";
+            }
+        });
+
+        // 2. 再生ソースの設定
         const fileURL = URL.createObjectURL(file);
         audioPlayer.src = fileURL;
 
-        // 自動再生
+        // 3. レジューム（前回の停止位置）の復元
+        const savedTime = localStorage.getItem(`resume_${currentFileName}`);
+        if (savedTime) {
+            const parseFloatTime = parseFloat(savedTime);
+            audioPlayer.currentTime = parseFloatTime;
+            
+            // ユーザーに前回位置から再開したことを通知
+            const minutes = Math.floor(parseFloatTime / 60);
+            const seconds = Math.floor(parseFloatTime % 60);
+            resumeStatus.textContent = `前回の停止位置（${minutes}分${seconds}秒）から再開しました`;
+        }
+
         audioPlayer.play().catch(err => {
-            console.log("自動再生がブロックされました。再生ボタンを押してください。", err);
+            console.log("自動再生がブロックされました。", err);
         });
+    });
+
+    // 4. 再生位置の自動記録 (再生中に時間が更新されるたびにlocalStorageへ保存)
+    audioPlayer.addEventListener('timeupdate', function() {
+        if (currentFileName && audioPlayer.currentTime > 0) {
+            localStorage.setItem(`resume_${currentFileName}`, audioPlayer.currentTime);
+        }
+    });
+
+    // 再生が最後まで完了したら、そのファイルのレジューム情報は削除する
+    audioPlayer.addEventListener('ended', function() {
+        if (currentFileName) {
+            localStorage.removeItem(`resume_${currentFileName}`);
+            resumeStatus.textContent = "再生が完了しました";
+        }
     });
 </script>
 
