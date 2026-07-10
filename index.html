@@ -135,7 +135,6 @@
             position: relative;
         }
         
-        /* 極力シンプルなSVGアイコン用クラス */
         .icon-btn {
             display: flex;
             justify-content: center;
@@ -151,7 +150,7 @@
         }
         input[type="file"] { display: none; }
         
-        /* 中央の再生ボタン（青背景の丸） */
+        /* 中央の再生ボタン */
         .play-btn {
             width: 54px;
             height: 54px;
@@ -278,7 +277,6 @@
 </div>
 
 <script>
-    // Service Worker の登録処理
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
             navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW登録失敗', err));
@@ -309,11 +307,9 @@
     let isDragging = false;
     let wasPlayingBeforeDrag = false;
 
-    // SVG Icons
     const svgPlay = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
     const svgPause = `<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
 
-    // --- 10段シークバーの初期化 ---
     function initMultiSeekbar() {
         seekbarContainer.innerHTML = '';
         seekSegments = [];
@@ -328,7 +324,6 @@
             input.step = 0.1;
             input.style.setProperty('--val', '0%');
             
-            // ドラッグ中の処理
             input.addEventListener('input', (e) => {
                 if (!isDragging) {
                     isDragging = true;
@@ -340,7 +335,6 @@
                 updateTimeDisplay((i * timePerBar) + val, audioPlayer.duration);
             });
             
-            // ドラッグ終了（シーク確定）時の安定化処理
             input.addEventListener('change', (e) => {
                 const val = parseFloat(e.target.value);
                 audioPlayer.currentTime = (i * timePerBar) + val;
@@ -371,7 +365,6 @@
         timeDisplay.textContent = `${formatTime(current)} / ${formatTime(total)}`;
     }
 
-    // --- ファイル読み込み処理 ---
     fileInput.addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -389,22 +382,25 @@
                 trackAlbum.textContent = tags.album || "-";
                 trackArtist.textContent = tags.artist || "-";
 
-                // 歌詞の取得
                 let loadedLyrics = tags.lyrics || (tags.unsynchronisedLyrics ? tags.unsynchronisedLyrics.text : "");
                 lyricsContent.textContent = loadedLyrics ? loadedLyrics : "歌詞情報が含まれていないか、読み込めませんでした。";
 
                 // ----------------------------------------------------
-                // 改良版: HPタグ（URL）の取得ロジック
+                // 修正版: Commentタグを最優先とするURL抽出ロジック
                 // ----------------------------------------------------
                 let foundUrl = null;
 
-                // 1. 特定の「HP」タグが存在するか優先チェック
-                if (tags.HP && typeof tags.HP === 'string') {
-                    foundUrl = tags.HP;
-                } else if (tags.hp && typeof tags.hp === 'string') {
-                    foundUrl = tags.hp;
-                } else if (tags.TXXX) {
-                    // ID3v2タグのTXXX (ユーザー定義テキスト) の中からHPを探す
+                // 1. 最優先: Commentタグを掘る
+                if (tags.comment) {
+                    if (typeof tags.comment === 'string') {
+                        foundUrl = tags.comment;
+                    } else if (typeof tags.comment === 'object' && tags.comment.text) {
+                        foundUrl = tags.comment.text;
+                    }
+                }
+
+                // 2. なければフォールバック1: TXXXタグ (HP)
+                if (!foundUrl && tags.TXXX) {
                     const txxxArray = Array.isArray(tags.TXXX) ? tags.TXXX : [tags.TXXX];
                     for (let t of txxxArray) {
                         if (t.data && t.data.description && t.data.description.toUpperCase() === 'HP') {
@@ -414,7 +410,7 @@
                     }
                 }
 
-                // 2. HPタグが見つからなかった場合、メタデータ全体の文字列からURLを探す（フォールバック）
+                // 3. なければフォールバック2: メタデータ全体の文字列からURLを自動走査
                 if (!foundUrl) {
                     try {
                         const tagsString = JSON.stringify(tags);
@@ -425,14 +421,16 @@
                     } catch(e) {}
                 }
 
-                // URLが見つかり、かつ http から始まっていれば有効化
-                if (foundUrl && foundUrl.startsWith('http')) {
-                    currentHpUrl = foundUrl;
-                    hpBtn.classList.remove('disabled');
+                // トリミングして有効なURLか検証
+                if (foundUrl) {
+                    foundUrl = foundUrl.trim();
+                    if (foundUrl.startsWith('http')) {
+                        currentHpUrl = foundUrl;
+                        hpBtn.classList.remove('disabled');
+                    }
                 }
                 // ----------------------------------------------------
 
-                // アートワークの取得
                 if (tags.picture) {
                     const { data, format } = tags.picture;
                     let base64String = "";
@@ -457,7 +455,6 @@
         audioPlayer.src = URL.createObjectURL(file);
     });
 
-    // メタデータ読み込み完了後
     audioPlayer.addEventListener('loadedmetadata', () => {
         const duration = audioPlayer.duration;
         timePerBar = duration / NUM_BARS;
@@ -480,7 +477,6 @@
         audioPlayer.play().catch(e => console.log("自動再生ブロック"));
     });
 
-    // 再生中の更新
     audioPlayer.addEventListener('timeupdate', () => {
         if (!timePerBar || isDragging) return;
         
@@ -510,7 +506,21 @@
         }
     });
 
-    // --- ボタン操作 ---
+    // ----------------------------------------------------
+    // らじるらじる等のVBRファイル迷子対策 (ストalled / waiting 監視)
+    // ----------------------------------------------------
+    audioPlayer.addEventListener('waiting', () => {
+        // シーク後などにデータが詰まったら、一瞬だけ再生位置をわずかに進めて強制リフレッシュをかける
+        if (!audioPlayer.paused && !isDragging) {
+            setTimeout(() => {
+                if (audioPlayer.readyState < 3) { // 充分なデータが溜まっていない場合
+                    audioPlayer.currentTime = audioPlayer.currentTime + 0.1;
+                }
+            }, 500);
+        }
+    });
+    // ----------------------------------------------------
+
     playBtn.addEventListener('click', () => {
         if (!audioPlayer.src) return;
         if (audioPlayer.paused) audioPlayer.play();
@@ -533,14 +543,12 @@
         if (currentFileName) localStorage.removeItem(`resume_${currentFileName}`);
     });
 
-    // HPボタン押下時
     hpBtn.addEventListener('click', () => {
         if (currentHpUrl && !hpBtn.classList.contains('disabled')) {
             window.open(currentHpUrl, '_blank');
         }
     });
 
-    // 歌詞表示
     coverArt.addEventListener('click', () => {
         if (currentFileName) lyricsOverlay.classList.toggle('active');
     });
